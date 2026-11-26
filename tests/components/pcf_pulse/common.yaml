@@ -1,0 +1,5 @@
+pcf_pulse:
+  id: pcf_pulse_counter
+  i2c_id: i2c_bus
+  addresses: [0x22, 0x21]
+  interrupt_pin: GPIO4
