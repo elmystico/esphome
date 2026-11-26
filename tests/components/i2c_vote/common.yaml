@@ -1,0 +1,22 @@
+i2c_vote:
+  - id: i2c_vote_bus
+    i2c_id: i2c_bus
+    update_interval: 60s
+
+ads1115:
+  - id: ads1115_voted
+    i2c_id: i2c_vote_bus
+    address: 0x48
+
+sensor:
+  - platform: ads1115
+    ads1115_id: ads1115_voted
+    multiplexer: A0_GND
+    gain: 4.096
+    name: ADS1115 voted voltage
+  - platform: i2c_vote
+    i2c_vote_id: i2c_vote_bus
+    corrected:
+      name: I2C vote corrected reads
+    rejected:
+      name: I2C vote rejected reads
