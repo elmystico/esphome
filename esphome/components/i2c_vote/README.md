@@ -13,7 +13,9 @@ Typical patterns seen on an ADS1015/ADS1115 behind a poor connector:
 
 - trailing ones, such as `0x1FFF` or `0x7FFF`: the device stopped driving the data line part way through a
   byte, so the pull-up resistor was read as ones;
-- a repeated byte, such as `0xE3E3` or `0x4A4A`: the device sent the same byte twice.
+- a repeated byte, such as `0xE3E3` or `0x4A4A`: the device sent the same byte twice;
+- zeros, `0x0000`, on several reads in a row: after the glitch the device kept the data line low for a few
+  transfers.
 
 ## How it works
 
@@ -21,9 +23,15 @@ Typical patterns seen on an ADS1015/ADS1115 behind a poor connector:
 reads (an address write followed by a read) checked:
 
 1. Read twice. If both copies match, pass the data on. This is the normal case: 2 transfers.
-2. If they differ, read a third time and use the value that appears twice (2 out of 3).
-3. If all three differ, return `ERROR_CRC`. The driver reports a communication failure instead of a wrong
-   value.
+2. If they differ, read a third time. If the third copy matches the first, pass it on: the second copy was
+   a single bad read.
+3. Otherwise return `ERROR_CRC`. The driver reports a communication failure instead of a wrong value.
+
+The second and third copies are not allowed to outvote the first. A glitch can leave the device returning
+the same wrong bytes for a few transfers in a row, so two copies read right after a disturbance can agree on
+a wrong value. This was seen on hardware: copies `00B3 0000 0000`, where an earlier version of this
+component (plain 2 out of 3) passed on `0x0000`. The first copy, read before the disturbance, is the one to
+confirm.
 
 Plain reads and plain writes pass through unchanged.
 
@@ -49,9 +57,9 @@ sensor:
   - platform: i2c_vote
     i2c_vote_id: bus_a_vote
     corrected:
-      name: "I2C corrected reads"   # first two copies differed, the third settled it
+      name: "I2C corrected reads"   # second copy differed, the third matched the first
     rejected:
-      name: "I2C rejected reads"    # all three copies differed
+      name: "I2C rejected reads"    # first and third copies differed
 ```
 
 Once a vote bus exists there are two I2C buses, so every I2C device in the configuration needs an explicit
@@ -67,7 +75,8 @@ Once a vote bus exists there are two I2C buses, so every I2C device in the confi
   continuous mode) cause extra third reads and, if they change twice, rejected reads.
 - **Writes are not checked.** A corrupted write to a configuration register is not detected.
 - **Errors that repeat in the same way** (for example a bit that is always read wrong) are not detected.
-  Voting only catches random errors.
+  Voting only catches random errors. A device that is already stuck before the first copy, and returns the
+  same wrong bytes on the first two copies, is not detected either.
 - **Reads longer than 32 bytes** are passed through without voting.
 - **Cost:** twice the bus time for register reads, 64 bytes of stack during a vote, two counters per vote
   bus. Devices not on a vote bus pay nothing.
@@ -78,57 +87,69 @@ Notation:
 
 - `p`: probability that one read (one copy) is corrupted;
 - `q`: probability that two corrupted copies are identical. It is not small: some patterns, such as
-  `0xE3E3`, repeat regardless of the true value.
+  `0xE3E3`, repeat regardless of the true value;
+- `c`: probability that the copy right after a corrupted copy is also corrupted (errors in bursts). With
+  independent errors `c = p`.
 
-Errors are assumed to be independent (see the last part of this section). Example values: `p = 2·10⁻³`
-(measured on an ADS1015 behind a poor connector: about 1 corrupted read in 800), `q` between 0.02 and 0.2.
+Example values: `p = 2·10⁻³` (measured on an ADS1015 behind a poor connector: about 1 corrupted read in 800),
+`q` between 0.02 and 0.2.
 
-### Measurements whose first copy is corrupted
+### Independent errors (`c = p`)
 
-Without voting, these would reach the user as wrong values.
-
-| Outcome | Formula | q = 0.02 | q = 0.2 |
-|---|---|---|---|
-| Corrected | ≈ 1 − 2p | 99.6 % | 99.6 % |
-| Rejected (error reported) | ≈ 2p(1 − q) | 0.39 % | 0.32 % |
-| Passed on with a wrong value | ≈ 2pq | 0.008 % | 0.08 % |
-
-An error is not corrected only when a second copy in the same vote is also corrupted. In that case the
-read is almost always rejected. A wrong value passes only when two corrupted copies are identical.
-
-### Measurements whose first copy is correct
+Measurements whose first copy is corrupted (without voting, these would reach the user as wrong values):
 
 | Outcome | Formula | Value |
 |---|---|---|
-| Passed on unchanged | 1 − p² | 99.9996 % |
-| Rejected although the first copy was correct | p²(1 − q) | ≈ 4·10⁻⁶ |
-| Replaced by a wrong value | p²q | 8·10⁻⁸ … 8·10⁻⁷ |
+| Rejected (error reported) | ≈ 1 | ≈ 100 % |
+| Passed on with a wrong value | ≈ pq | 0.004 % … 0.04 % |
 
-A correct read is lost only when both other copies are corrupted.
+The first copy is never replaced, so a bad first copy is always rejected, unless the second copy is
+corrupted in exactly the same way.
 
-### Overall
+Measurements whose first copy is correct:
+
+| Outcome | Formula | Value |
+|---|---|---|
+| Passed on unchanged (second copy good, or third copy good) | ≈ 1 − p² | 99.9996 % |
+| Rejected although the first copy was correct | ≈ p² | ≈ 4·10⁻⁶ |
+| Replaced by a wrong value | 0 | the first copy is never replaced |
+
+Overall:
 
 | | Without voting | With voting |
 |---|---|---|
-| Wrong values passed on, per read | p = 2·10⁻³ | ≈ 3p²q = 2.4·10⁻⁷ … 2.4·10⁻⁶ |
-| Rejected reads, per read | 0 | ≈ 3p²(1 − q) ≈ 1·10⁻⁵ |
+| Wrong values passed on, per read | p = 2·10⁻³ | ≈ p²q = 8·10⁻⁸ … 8·10⁻⁷ |
+| Rejected reads, per read | 0 | ≈ p ≈ 2·10⁻³ |
+| Corrected reads, per read | 0 | ≈ p (bad second copy, good third) |
 | Transfers per read | 1 | ≈ 2 + 2p |
 
-For example, a device with 4 channels read every 15 s (about 23 000 reads a day) goes from about 46 wrong
-values a day to between one every half year and one every 18 days, at the cost of about one rejected read
-every 4 to 5 days.
+Voting turns almost every wrong value into a missing value. For a device with 4 channels read every 15 s
+(about 23 000 reads a day) this is about 46 wrong values a day without voting, against about 46 missing
+values a day and one wrong value every few months to few years with voting.
 
-### When errors come in bursts
+### Errors in bursts (`c` close to 1)
 
-The numbers above assume that a corrupted copy does not make the next copy more likely to be corrupted. A
-poor contact can break this: if, after a corrupted copy, the next one is corrupted with probability `c`,
-then about `c` of the corrupted measurements are not corrected (instead of `2p`).
+If the device stays stuck for a few transfers after a glitch, the copies after a corrupted one are also
+corrupted, often identically (`0x0000`, `0xFFFF`). Then:
 
-The diagnostic counters show which case applies. With independent errors:
+- a bad first copy is followed by bad second and third copies, which may agree with each other. A plain
+  2 out of 3 vote would pass that value on; this component rejects it;
+- a bad second copy is usually followed by a bad third copy, so the read is rejected instead of corrected;
+- a wrong value is passed on only when the device was already stuck during the first copy and returned the
+  same bytes on the first two copies.
+
+The diagnostic counters show which case applies:
 
 ```
-rejected / corrected ≈ 1.5 · p · (1 − q)     (about 0.003 for p = 2·10⁻³)
+corrected / rejected ≈ 1        independent errors (a bad second copy is as likely as a bad first one,
+                                and the third copy is then good)
+corrected / rejected ≪ 1        bursts: after a bad copy the next one is bad too
 ```
 
-A ratio clearly above this means the errors come in bursts. A short pause between the copies (a few
-milliseconds) would then help, because the copies would no longer hit the same disturbance.
+### Measured
+
+ADS1015 behind a poor connector, 4 channels every 15 s, 400 kHz, first version of this component (plain
+2 out of 3), about 10 hours: 6 reads "corrected", 1 rejected. All 6 corrected reads gave `0x0000`, a wrong
+value, at the moments where the measured voltage was clearly not zero. With diagnostic logging, typical
+copies were `00B3 0000 0000` and `4850 FFFF 0000`. The errors come in bursts, which is why the second and
+third copies are no longer allowed to outvote the first.

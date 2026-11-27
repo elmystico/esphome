@@ -42,14 +42,10 @@ i2c::ErrorCode I2CVoteBus::write_readv(uint8_t address, const uint8_t *write_buf
     ESP_LOGV(TAG, "0x%02X: second copy differed, first and third agree", address);
     return i2c::ERROR_OK;
   }
-  if (std::memcmp(second, third, read_count) == 0) {
-    std::memcpy(read_buffer, second, read_count);
-    this->corrected_count_++;
-    ESP_LOGV(TAG, "0x%02X: first copy differed, second and third agree", address);
-    return i2c::ERROR_OK;
-  }
+  // Second and third agreeing is not trusted: after a glitch a device can return the same wrong
+  // bytes on several reads in a row (seen as 0x0000 twice after a corrupted first copy).
   this->rejected_count_++;
-  ESP_LOGW(TAG, "0x%02X: three reads of the same register differ, read rejected", address);
+  ESP_LOGW(TAG, "0x%02X: first and third read differ, read rejected", address);
   return i2c::ERROR_CRC;
 }
 
