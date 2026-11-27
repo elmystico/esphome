@@ -90,6 +90,8 @@ float ADS1115Component::request_measurement(ADS1115Multiplexer multiplexer, ADS1
     config |= 0b1000000000000000;
   }
 
+  const uint16_t written = config;  // test build only: diagnostics
+  uint8_t polls = 0;                // test build only: diagnostics
   if (!this->continuous_mode_ || this->prev_config_ != config) {
     if (!this->write_byte_16(ADS1115_REGISTER_CONFIG, config)) {
       this->status_set_warning();
@@ -159,6 +161,7 @@ float ADS1115Component::request_measurement(ADS1115Multiplexer multiplexer, ADS1
           this->status_set_warning();
           return NAN;
         }
+        polls++;
         if ((config >> 15) != 0)
           break;
         if (millis() - start > 100) {
@@ -175,6 +178,12 @@ float ADS1115Component::request_measurement(ADS1115Multiplexer multiplexer, ADS1
   if (!this->read_byte_16(ADS1115_REGISTER_CONVERSION, &raw_conversion)) {
     this->status_set_warning();
     return NAN;
+  }
+
+  // test build only: log results that a 12-bit converter cannot give, or an exact zero
+  if (raw_conversion == 0 || (resolution == ADS1015_12_BITS && (raw_conversion & 0x000F) != 0)) {
+    ESP_LOGW(TAG, "Suspect result: raw 0x%04X, config written 0x%04X, last read 0x%04X, ready polls %u", raw_conversion,
+             written, config, polls);
   }
 
   if (resolution == ADS1015_12_BITS) {

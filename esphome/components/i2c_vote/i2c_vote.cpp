@@ -1,6 +1,7 @@
 #include "i2c_vote.h"
 
 #include <cstring>
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome::i2c_vote {
@@ -28,6 +29,14 @@ i2c::ErrorCode I2CVoteBus::write_readv(uint8_t address, const uint8_t *write_buf
   err = this->parent_->write_readv(address, write_buffer, write_count, third, read_count);
   if (err != i2c::ERROR_OK)
     return err;
+  // test build only: show the three copies
+  {
+    char a[2 * MAX_VOTE_READ + 1], b[2 * MAX_VOTE_READ + 1], c[2 * MAX_VOTE_READ + 1];
+    format_hex_to(a, read_buffer, read_count);
+    format_hex_to(b, second, read_count);
+    format_hex_to(c, third, read_count);
+    ESP_LOGW(TAG, "0x%02X reg 0x%02X: copies %s %s %s", address, write_buffer[0], a, b, c);
+  }
   if (std::memcmp(read_buffer, third, read_count) == 0) {
     this->corrected_count_++;
     ESP_LOGV(TAG, "0x%02X: second copy differed, first and third agree", address);
