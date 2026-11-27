@@ -18,8 +18,8 @@ static constexpr size_t MAX_VOTE_READ = 32;
 /// I2C has no checksum: a glitch on SCL can make a device lose bit sync, and the controller
 /// then reads wrong bytes and still acknowledges them. For a register read (address write
 /// followed by a read), this bus reads twice and passes the data on when both copies match.
-/// When they differ it reads a third time and uses the value that appears twice; when all
-/// three differ it returns ERROR_CRC instead of wrong data.
+/// When they differ it reads a third time and passes the data on only when the third copy
+/// matches the first; otherwise it returns ERROR_CRC instead of wrong data.
 ///
 /// Only transfers with both a write and a read part are repeated. Plain reads and plain writes
 /// pass through unchanged, because repeating them can consume data (FIFOs, measurement results)
@@ -46,8 +46,8 @@ class I2CVoteBus final : public PollingComponent, public i2c::I2CBus {
 
  protected:
   i2c::I2CBus *parent_{nullptr};
-  uint32_t corrected_count_{0};  ///< reads where the first two copies differed and the third settled it
-  uint32_t rejected_count_{0};   ///< reads where all three copies differed
+  uint32_t corrected_count_{0};  ///< reads where the second copy differed and the third matched the first
+  uint32_t rejected_count_{0};   ///< reads where the first and third copies differed
 };
 
 }  // namespace esphome::i2c_vote

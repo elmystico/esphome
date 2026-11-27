@@ -49,12 +49,11 @@ TEST_F(I2CVoteTest, TwoMatchingReadsPassWithoutAThird) {
   EXPECT_EQ(this->bus.transfers, 2);
 }
 
-TEST_F(I2CVoteTest, BadFirstReadIsOutvoted) {
-  this->bus.answers = {{0x1F, 0xFF}, {0x12, 0x30}, {0x12, 0x30}};
+TEST_F(I2CVoteTest, SecondAndThirdAgreeingIsRejected) {
+  // Seen on hardware: a corrupted first copy, then the device stuck returning zeros
+  this->bus.answers = {{0x00, 0xB3}, {0x00, 0x00}, {0x00, 0x00}};
   uint8_t out[2]{};
-  EXPECT_EQ(this->read_register(out), i2c::ERROR_OK);
-  EXPECT_EQ(out[0], 0x12);
-  EXPECT_EQ(out[1], 0x30);
+  EXPECT_EQ(this->read_register(out), i2c::ERROR_CRC);
   EXPECT_EQ(this->bus.transfers, 3);
 }
 
@@ -64,6 +63,14 @@ TEST_F(I2CVoteTest, BadSecondReadIsOutvoted) {
   EXPECT_EQ(this->read_register(out), i2c::ERROR_OK);
   EXPECT_EQ(out[0], 0x12);
   EXPECT_EQ(out[1], 0x30);
+  EXPECT_EQ(this->bus.transfers, 3);
+}
+
+TEST_F(I2CVoteTest, StuckAfterAGoodFirstReadIsRejected) {
+  // Seen on hardware: a good first copy, then ones, then zeros
+  this->bus.answers = {{0x48, 0x50}, {0xFF, 0xFF}, {0x00, 0x00}};
+  uint8_t out[2]{};
+  EXPECT_EQ(this->read_register(out), i2c::ERROR_CRC);
 }
 
 TEST_F(I2CVoteTest, ThreeDifferentReadsAreRejected) {
