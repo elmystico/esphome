@@ -162,8 +162,17 @@ float ADS1115Component::request_measurement(ADS1115Multiplexer multiplexer, ADS1
           return NAN;
         }
         polls++;
-        if ((config >> 15) != 0)
+        if ((config >> 15) != 0) {
+          // The device answers with its power-on default (0x8583) after a reset: the conversion was never
+          // started and the conversion register holds 0
+          if ((config & 0x7FFF) != (written & 0x7FFF)) {
+            ESP_LOGW(TAG, "Config read back 0x%04X, written 0x%04X (device reset?), measurement dropped", config,
+                     written);
+            this->status_set_warning();
+            return NAN;
+          }
           break;
+        }
         if (millis() - start > 100) {
           ESP_LOGW(TAG, "Reading ADS1115 timed out");
           this->status_set_warning();
